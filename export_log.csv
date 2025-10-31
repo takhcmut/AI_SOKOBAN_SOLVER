@@ -1,0 +1,10 @@
+dir_rel,filename,size_bytes,status,note
+src,sokoban.py,2536,ok,
+src,map_parser.py,1387,ok,
+src,point.py,476,ok,
+src,__init__.py,122,ok,
+src,state.py,8496,ok,
+src,deadlock_detector.py,6003,ok,
+src,search.py,13613,ok,
+src,async_solver.py,2553,ok,
+src,ui.py,19985,ok,
