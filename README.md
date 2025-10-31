@@ -15,11 +15,10 @@ sokoban-python
 │       ├── state.py
 │       ├── search.py
 │       ├── map_parser.py
-│       └── sokoban_solver.py
+│       └── ui.py
 ├── formal_inputs
 │   └── input_10_10_3_1.txt
-├── maps
-│   └── README.md
+├── assets
 ├── requirements.txt
 └── README.md
 ```
@@ -43,7 +42,7 @@ sokoban-python
 3. **Run the Sokoban Solver**:
    - Navigate to the `src/sokoban` directory and run the `sokoban_solver.py` file:
      ```
-     python sokoban_solver.py
+     python ui.py
      ```
 
 This will execute the Sokoban game solver using the provided input file.
