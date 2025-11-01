@@ -1,22 +1,17 @@
 # -*- coding: utf-8 -*-
 """
-Sokoban Solver Visualizer (UI) — bản hoàn chỉnh, ổn định
+Sokoban Solver Visualizer (UI)
 
-Tính năng:
-- Speed chỉ chỉnh ở MENU qua selector (←/→, hoặc Q/E). Khi Running/Finished KHÔNG vẽ slider.
-- Enter ở MENU: nếu focus=Map -> next map; ngược lại -> Solve ngay.
-- Enter ở FINISHED: next map + về MENU.
-- Chevron (mũi tên trái/phải) vẽ bằng polygon, không phụ thuộc font.
-- Tên map 'đẹp' + hiển thị chỉ số (i/total).
-- Đo bộ nhớ: psutil (RSS) + tracemalloc peak (nếu có) — tự động tắt nếu không cài.
-- Solver chạy trong thread + cancel; tương thích search cũ (không có stop_cb) bằng try/except TypeError.
+Luật Enter (đúng yêu cầu):
+- MENU: Enter = Solve ngay (bất kể focus đang ở đâu)
+- FINISHED: Enter = Next map CHỈ KHI solved=True (nếu FAILED thì Enter không tác dụng)
 
 Hotkeys:
-  ↑/↓           : chuyển focus (Algorithm / Map / Speed / Solve / Back)
+  ↑/↓           : chuyển focus (Algorithm / Map / Speed / Solve)
   ←/→  hoặc Q/E : đổi Algorithm / Map / Speed (tuỳ focus)
-  Enter         : MENU -> Solve (trừ khi focus=Map -> Next map) ; FINISHED -> Next map
+  Enter         : MENU -> Solve ; FINISHED(solved)=Next map
   R             : Replay (khi Running/Finished) hoặc Solve nhanh ở MENU
-  B / Esc       : Back về menu (hoặc Cancel khi Solving)
+  Esc           : Back về menu (hoặc Cancel khi Solving)
 """
 
 import os
@@ -32,7 +27,7 @@ ASSET_DIR = os.path.join(os.path.dirname(__file__), "..", "assets")
 MAP_DIR   = os.path.join(os.path.dirname(__file__), "..", "formal_inputs")
 FONT_PATH = os.path.join(ASSET_DIR, "NotoSans-Regular.ttf")
 
-FPS = 120
+FPS  = 120
 TILE = 50
 RADIUS = 14
 
@@ -55,9 +50,10 @@ COL_OK     = (120, 220, 160)
 COL_MUTED  = (160, 168, 180)
 COL_TEXT   = (230, 232, 236)
 COL_BAD    = (230, 110, 110)
-COL_BTN    = (58, 110, 210)
-COL_BTN_OFF= (68, 72, 82)
+COL_BTN    = (64, 118, 230)
+COL_BTN_HI = (86, 150, 255)   # top highlight
 COL_INNER  = (26, 28, 34)
+COL_SHADOW = (0, 0, 0)
 
 # --- Optional memory measurement
 _have_psutil = False
@@ -175,8 +171,7 @@ def draw_board(surface, sokoban: Sokoban, area: pygame.Rect, tile=TILE):
 
     goals = {(g.get_x(), g.get_y()) for g in sokoban.get_storages()}
     for gx, gy in goals:
-        x = ox + (gy-1)*t
-        y = oy + (gx-1)*t
+        x = ox + (gy-1)*t; y = oy + (gx-1)*t
         if goal: surface.blit(goal, (x, y))
         else: pygame.draw.circle(surface, (240, 205, 80), (x + t//2, y + t//2), max(4, t//6))
 
@@ -242,11 +237,34 @@ def draw_selector(rect, label, value, focused=False):
     draw_chevron(screen, (rect.right - 34, rect.y + 48), size=12, direction="right",
                  color=COL_MUTED if not focused else COL_TEXT)
 
-def draw_button(rect, label, focused=False, active=True):
-    col = COL_BTN if active else COL_BTN_OFF
-    if focused:
+def draw_button_solve(rect, label, focused=False, active=True):
+    """Nút Solve: full width, căn giữa, đổ bóng nhẹ + highlight top."""
+    # shadow
+    shadow = rect.copy()
+    shadow.x += 2; shadow.y += 3
+    pygame.draw.rect(screen, (0, 0, 0, 0), shadow, 0, border_radius=RADIUS)  # just reserve
+    pygame.draw.rect(screen, (0, 0, 0), shadow, border_radius=RADIUS)
+
+    # base
+    base_col = COL_BTN if active else (90, 96, 110)
+    if focused and active:
         pygame.draw.rect(screen, (90, 120, 220), rect.inflate(10, 10), border_radius=RADIUS)
-    round_rect(screen, rect, col)
+    round_rect(screen, rect, base_col)
+
+    # top highlight strip
+    hi = pygame.Rect(rect.x, rect.y, rect.w, max(10, rect.h // 3))
+    round_rect(screen, hi, COL_BTN_HI)
+
+    # label
+    t = font_mid.render(label, True, (255, 255, 255))
+    screen.blit(t, (rect.centerx - t.get_width() // 2, rect.centery - t.get_height() // 2))
+
+def draw_button(rect, label, focused=False, active=True):
+    # generic (Replay)
+    base_col = (80, 86, 100) if not active else (72, 134, 246)
+    if focused and active:
+        pygame.draw.rect(screen, (90, 120, 220), rect.inflate(10, 10), border_radius=RADIUS)
+    round_rect(screen, rect, base_col)
     t = font_mid.render(label, True, (255, 255, 255))
     screen.blit(t, (rect.centerx - t.get_width() // 2, rect.centery - t.get_height() // 2))
 
@@ -256,7 +274,7 @@ def draw_info(rect, lines):
     for s, c in lines:
         t = font_mid.render(s, True, c)
         screen.blit(t, (rect.x + 14, y))
-        y += t.get_height() + 6  # <-- fixed: không còn dấu ')' thừa
+        y += t.get_height() + 6
 
 # --- Keycap helpers for finished overlay ---
 def keycap_size(text, pad_x=10, pad_y=6):
@@ -266,7 +284,6 @@ def keycap_size(text, pad_x=10, pad_y=6):
 def draw_keycap(surface, x, y, text, pad_x=10, pad_y=6):
     w, h = keycap_size(text, pad_x, pad_y)
     rect = pygame.Rect(x, y, w, h)
-    # viền + nền
     pygame.draw.rect(surface, (54, 58, 68), rect, border_radius=8)
     pygame.draw.rect(surface, (90, 94, 106), rect, width=2, border_radius=8)
     t = font_mid.render(text, True, COL_TEXT)
@@ -304,7 +321,7 @@ def draw_finished_overlay(solved: bool):
     cx, cy = SCREEN_W // 2, SCREEN_H // 2
 
     # card trung tâm
-    card_w, card_h = 760, 180
+    card_w, card_h = 760, 190
     card = pygame.Rect(cx - card_w//2, cy - card_h//2, card_w, card_h)
     pygame.draw.rect(screen, COL_PANEL, card, border_radius=16)
     pygame.draw.rect(screen, (60, 66, 76), card, width=2, border_radius=16)
@@ -328,18 +345,16 @@ def draw_finished_overlay(solved: bool):
         pygame.draw.line(screen, col, (ic_c[0]-7, ic_c[1]-7), (ic_c[0]+7, ic_c[1]+7), 3)
         pygame.draw.line(screen, col, (ic_c[0]-7, ic_c[1]+7), (ic_c[0]+7, ic_c[1]-7), 3)
 
-    # hàng keycap
-    items = [
-        ("Enter", "Next map"),
-        ("R",     "Replay"),
-        ("B",     "Back"),
-        ("Esc",   "Back"),
-    ]
+    # hàng keycap: CHỈ hiện Enter khi solved=True
+    items = [("R", "Replay"), ("Esc", "Back")]
+    if solved:
+        items = [("Enter", "Next map")] + items
+
     GAP = 22
     KC_TXT_GAP = 10
     total_w = 0
     for key, desc in items:
-        kc_w, kc_h = keycap_size(key)
+        kc_w, _ = keycap_size(key)
         desc_w, _  = font_mid.size(desc)
         total_w += kc_w + KC_TXT_GAP + desc_w + GAP
     total_w -= GAP
@@ -352,7 +367,7 @@ def draw_finished_overlay(solved: bool):
         x = kc.right + KC_TXT_GAP
         t = font_mid.render(desc, True, (235, 235, 240))
         screen.blit(t, (x, y + (kc.height - t.get_height()) // 2))
-        x += t.get_width() + GAP  # <-- fixed: không còn ')' thừa
+        x += t.get_width() + GAP
 
 # -------- Main --------
 def main():
@@ -366,7 +381,7 @@ def main():
     algo_index = 1  # A* default
     speed_idx  = DEFAULT_SPEED_INDEX
 
-    focus = 0  # 0: algo, 1: map, 2: speed, 3: solve, 4: back
+    focus = 0  # 0: algo, 1: map, 2: speed, 3: solve
 
     # scene state
     scene = "menu"  # menu | solving | running | finished
@@ -404,9 +419,10 @@ def main():
     sel_speed = pygame.Rect(side_rect.x + 16, side_rect.y + 260, side_rect.w - 32, 90)
     info_rect = pygame.Rect(side_rect.x + 16, side_rect.y + 370, side_rect.w - 32, 240)
 
-    btn_solve = pygame.Rect(side_rect.x + 16, side_rect.bottom - 120, 180, 48)
-    btn_back  = pygame.Rect(side_rect.right - 16 - 150, side_rect.bottom - 120, 150, 48)
-    btn_repl  = pygame.Rect(side_rect.right - 16 - 150, side_rect.bottom - 60, 150, 48)
+    # Nút Solve: full width, ở sát đáy, cao hơn một chút cho dễ click
+    btn_solve = pygame.Rect(side_rect.x + 16, side_rect.bottom - 84, side_rect.w - 32, 54)
+    # Nút Replay trong Running/Finished
+    btn_repl  = pygame.Rect(side_rect.x + 16, side_rect.bottom - 84, side_rect.w - 32, 48)
 
     def current_map_path():
         return os.path.join(MAP_DIR, maps[map_index]) if 0 <= map_index < len(maps) else None
@@ -531,7 +547,7 @@ def main():
 
             elif ev.type == pygame.KEYDOWN:
                 # Global back/cancel
-                if ev.key in (pygame.K_ESCAPE, pygame.K_b):
+                if ev.key == pygame.K_ESCAPE:
                     if scene == "solving":
                         cancel_evt.set()
                     else:
@@ -539,8 +555,8 @@ def main():
 
                 # MENU
                 if scene == "menu":
-                    if ev.key == pygame.K_UP:   focus = (focus - 1) % 5
-                    elif ev.key == pygame.K_DOWN: focus = (focus + 1) % 5
+                    if ev.key == pygame.K_UP:   focus = (focus - 1) % 4
+                    elif ev.key == pygame.K_DOWN: focus = (focus + 1) % 4
                     elif ev.key in (pygame.K_LEFT, pygame.K_q):
                         if   focus == 0: cycle_algo(-1)
                         elif focus == 1: cycle_map(-1)
@@ -550,17 +566,12 @@ def main():
                         elif focus == 1: cycle_map(1)
                         elif focus == 2: cycle_speed(1)
                     elif ev.key == pygame.K_RETURN:
-                        if focus == 1:
-                            cycle_map(1)  # Enter trên Map = next map
-                        else:
-                            if start_solve(): scene = "solving"
+                        # Enter luôn Solve
+                        if start_solve():
+                            scene = "solving"
                     elif ev.key == pygame.K_r:
-                        if start_solve(): scene = "solving"
-
-                # SOLVING
-                elif scene == "solving":
-                    if ev.key == pygame.K_c:
-                        cancel_evt.set()
+                        if start_solve():
+                            scene = "solving"
 
                 # RUNNING
                 elif scene == "running":
@@ -568,6 +579,7 @@ def main():
                         if 0 <= map_index < len(maps):
                             sokoban = Sokoban(current_map_path()); sokoban.load_map()
                             move_idx = 0; step_accum_ms = 0.0; solved = False
+                    # Enter ở RUNNING: không làm gì
 
                 # FINISHED
                 elif scene == "finished":
@@ -576,7 +588,11 @@ def main():
                         move_idx = 0; step_accum_ms = 0.0; solved = False
                         scene = "running"
                     elif ev.key == pygame.K_RETURN:
-                        cycle_map(1); load_preview(); scene = "menu"
+                        if solved and total_maps > 0:
+                            map_index = (map_index + 1) % total_maps
+                            load_preview()
+                            scene = "menu"
+                        # nếu FAILED: Enter không làm gì
 
             elif ev.type == pygame.MOUSEBUTTONDOWN:
                 mx, my = ev.pos
@@ -586,13 +602,10 @@ def main():
                     elif sel_speed.collidepoint(mx, my): focus = 2
                     elif btn_solve.collidepoint(mx, my):
                         focus = 3
-                        if start_solve(): scene = "solving"
-                    elif btn_back.collidepoint(mx, my):
-                        focus = 4
-                        load_preview()
+                        if start_solve():
+                            scene = "solving"
                 elif scene in ("running", "finished"):
-                    if btn_back.collidepoint(mx, my): scene = "menu"
-                    elif btn_repl.collidepoint(mx, my):
+                    if btn_repl.collidepoint(mx, my):
                         if 0 <= map_index < len(maps):
                             sokoban = Sokoban(current_map_path()); sokoban.load_map()
                             move_idx = 0; step_accum_ms = 0.0; solved = False
@@ -618,7 +631,10 @@ def main():
         round_rect(screen, board_rect, COL_PANEL)
         inner = board_rect.inflate(-24, -24)
         round_rect(screen, inner, COL_INNER)
-        draw_panel(side_rect, "Sokoban Solver")
+        # panel title
+        round_rect(screen, pygame.Rect(800, 20, 380, 720), COL_PANEL)
+        ttitle = font_big.render("Sokoban Solver", True, COL_TEXT)
+        screen.blit(ttitle, (800 + 16, 20 + 10))
 
         # board
         if scene in ("menu", "solving"):
@@ -627,17 +643,16 @@ def main():
             if sokoban: draw_board(screen, sokoban, inner)
 
         # selectors
-        algo_val = algo_list[algo_index]
+        algo_list_local = ["BFS", "A*"]
+        algo_val = algo_list_local[algo_index]
         map_val  = maps[map_index] if maps else "(no maps)"
         speed_name, speed_ms = SPEED_PRESETS[speed_idx]
 
         draw_selector(sel_algo, "Algorithm", algo_val, focused=(scene == "menu" and focus == 0))
-
         nice_name = beautify_map_name(map_val)
         if total_maps > 0 and 0 <= map_index < total_maps:
             nice_name = f"{nice_name}   ({map_index+1}/{total_maps})"
         draw_selector(sel_map, "Map", nice_name, focused=(scene == "menu" and focus == 1))
-
         draw_selector(sel_speed, "Speed", f"{speed_name}  ({speed_ms} ms/step)",
                       focused=(scene == "menu" and focus == 2))
 
@@ -660,10 +675,8 @@ def main():
 
         # Buttons
         if scene == "menu":
-            draw_button(btn_solve, "Solve (Enter)", focused=(focus == 3))
-            draw_button(btn_back,  "Back",          focused=(focus == 4))
+            draw_button_solve(btn_solve, "Solve (Enter)", focused=(focus == 3), active=(total_maps > 0))
         else:
-            draw_button(btn_back,  "Back")
             draw_button(btn_repl,  "Replay (R)")
 
         # Overlays
